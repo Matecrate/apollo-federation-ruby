@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'graphql'
 require 'apollo-federation/service'
 
@@ -7,16 +9,18 @@ module ApolloFederation
       '_Any',
       '_Entity',
       '_Service',
-    ]
+    ].freeze
     FEDERATION_QUERY_FIELDS = [
       '_entities',
       '_service',
-    ]
+    ].freeze
 
     def build_object_type_node(object_type)
       object_node = super
       if query_type?(object_type)
-        federation_fields = object_node.fields.select { |field| FEDERATION_QUERY_FIELDS.include?(field.name) }
+        federation_fields = object_node.fields.select do |field|
+          FEDERATION_QUERY_FIELDS.include?(field.name)
+        end
         federation_fields.each { |field| object_node = object_node.delete_child(field) }
       end
       merge_directives(object_node, object_type.metadata[:federation_directives])
@@ -48,7 +52,7 @@ module ApolloFederation
       (directives || []).each do |directive|
         node = node.merge_directive(
           name: directive[:name],
-          arguments: build_arguments_node(directive[:arguments])
+          arguments: build_arguments_node(directive[:arguments]),
         )
       end
       node

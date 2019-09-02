@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'graphql'
 require 'apollo-federation/any'
 
@@ -24,14 +26,17 @@ module ApolloFederation
         type = context.warden.get_type(typename)
         if type.nil? || type.kind != GraphQL::TypeKinds::OBJECT
           # TODO: Raise a specific error class?
-          raise "The _entities resolver tried to load an entity for type \"#{typename}\", but no object type of that name was found in the schema"
+          raise "The _entities resolver tried to load an entity for type \"#{typename}\"," \
+                ' but no object type of that name was found in the schema'
         end
 
         # TODO: Handle non-class types?
         type_class = type.metadata[:type_class]
-        result = type_class.respond_to?(:resolve_reference) ?
-          type_class.resolve_reference(reference, context) :
-          reference
+        if type_class.respond_to?(:resolve_reference)
+          result = type_class.resolve_reference(reference, context)
+        else
+          result = reference
+        end
 
         # TODO: This isn't 100% correct: if (for some reason) 2 different resolve_reference calls
         # return the same object, it might not have the right type

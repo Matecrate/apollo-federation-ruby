@@ -1,18 +1,12 @@
+# frozen_string_literal: true
+
+require 'spec_helper'
 require 'graphql'
 require 'apollo-federation/schema'
 require 'apollo-federation/field'
 require 'apollo-federation/object'
 
-describe ApolloFederation::EntitiesField do
-  RSpec::Matchers.define :match_sdl do |expected|
-    match do |actual|
-      @actual = "#{actual}\n"
-      @actual == expected
-    end
-
-    diffable
-  end
-
+RSpec.describe ApolloFederation::EntitiesField do
   let(:base_schema) do
     Class.new(GraphQL::Schema) do
       include ApolloFederation::Schema
@@ -36,15 +30,20 @@ describe ApolloFederation::EntitiesField do
       end
 
       expect(schema.to_definition).to match_sdl(
-      <<~GRAPHQL
+        <<~GRAPHQL,
           type Query {
             _service: _Service!
           }
 
+          """
+          The sdl representing the federated service capabilities. Includes federation
+          directives, removes federation types, and includes rest of full schema after
+          schema directives have been applied
+          """
           type _Service {
             sdl: String
           }
-      GRAPHQL
+        GRAPHQL
       )
     end
   end
@@ -55,7 +54,7 @@ describe ApolloFederation::EntitiesField do
         graphql_name 'TypeWithKey'
         key fields: 'id'
         field :id, 'ID', null: false
-        field :other_field, 'String', null: false
+        field :other_field, 'String', null: true
       end
     end
 
@@ -77,32 +76,38 @@ describe ApolloFederation::EntitiesField do
 
       it 'adds an _entities field to the Query object' do
         expect(schema.to_definition).to match_sdl(
-        <<~GRAPHQL
-          type Query {
-            _entities(representations: [_Any!]!): [_Entity]!
-            _service: _Service!
-            typeWithKey: TypeWithKey
-          }
+          <<~GRAPHQL,
+            type Query {
+              _entities(representations: [_Any!]!): [_Entity]!
+              _service: _Service!
+              typeWithKey: TypeWithKey
+            }
 
-          type TypeWithKey {
-            id: ID!
-            otherField: String!
-          }
+            type TypeWithKey {
+              id: ID!
+              otherField: String
+            }
 
-          scalar _Any
+            scalar _Any
 
-          union _Entity = TypeWithKey
+            union _Entity = TypeWithKey
 
-          type _Service {
-            sdl: String
-          }
-        GRAPHQL
+            """
+            The sdl representing the federated service capabilities. Includes federation
+            directives, removes federation types, and includes rest of full schema after
+            schema directives have been applied
+            """
+            type _Service {
+              sdl: String
+            }
+          GRAPHQL
         )
       end
     end
 
     context 'when a Query object is not provided' do
-      let(:mutation) do # creating a mutation with the TypeWithKey object so it gets included in the schema
+      let(:mutation) do
+        # creating a mutation with the TypeWithKey object so it gets included in the schema
         type_with_key_class = type_with_key
         Class.new(base_object) do
           graphql_name 'Mutation'
@@ -119,7 +124,7 @@ describe ApolloFederation::EntitiesField do
 
       it 'creates a Query object and adds an _entities field to it' do
         expect(schema.to_definition).to match_sdl(
-          <<~GRAPHQL
+          <<~GRAPHQL,
             type Mutation {
               typeWithKey: TypeWithKey
             }
@@ -131,13 +136,18 @@ describe ApolloFederation::EntitiesField do
 
             type TypeWithKey {
               id: ID!
-              otherField: String!
+              otherField: String
             }
 
             scalar _Any
 
             union _Entity = TypeWithKey
 
+            """
+            The sdl representing the federated service capabilities. Includes federation
+            directives, removes federation types, and includes rest of full schema after
+            schema directives have been applied
+            """
             type _Service {
               sdl: String
             }
@@ -146,53 +156,56 @@ describe ApolloFederation::EntitiesField do
       end
 
       describe 'resolver for _entities' do
-        let(:execute_query) do
-          schema.execute(
-            "{ _entities(representations: #{representations}) { ... on TypeWithKey {#{selection}} } }"
-          )
-        end
-        let(:selection) { 'id otherField' }
         subject(:entities_result) { execute_query['data']['_entities'] }
+
+        let(:query) do
+          <<~GRAPHQL
+            query EntitiesQuery($representations: [_Any!]!) {
+              _entities(representations: $representations) {
+                ... on TypeWithKey {
+                  id
+                  otherField
+                }
+              }
+            }
+          GRAPHQL
+        end
+
+        let(:execute_query) do
+          schema.execute(query, variables: { representations: representations })
+        end
         let(:errors) { execute_query['errors'] }
 
-        context 'representations is empty' do
-          let(:representations) {'[]'}
+        context 'when representations is empty' do
+          let(:representations) { [] }
+
           it { is_expected.to match_array [] }
           it { expect(errors).to be_nil }
         end
 
-        context 'representations is not empty' do
-          let(:representations) {"[{__typename: #{typename}, id: #{id}}]"}
+        context 'when representations is not empty' do
+          let(:representations) { [{ __typename: typename, id: id }] }
           let(:id) { 123 }
 
-          context 'typename corresponds to a type that does not exist in the schema' do
+          context 'when typename corresponds to a type that does not exist in the schema' do
             let(:typename) { 'TypeNotInSchema' }
 
             it 'raises' do
-              expect(-> {execute_query}).to raise_error(
-                /The _entities resolver tried to load an entity for type "TypeNotInSchema"/
+              expect(-> { execute_query }).to raise_error(
+                /The _entities resolver tried to load an entity for type "TypeNotInSchema"/,
               )
             end
           end
 
-          context 'typename corresponds to a type that exists in the schema' do
+          context 'when typename corresponds to a type that exists in the schema' do
             let(:typename) { type_with_key.graphql_name }
 
-            context 'the type does not define a resolve_reference method' do
-              context 'selection includes fields that are not part of the reference' do
-                let(:selection) { 'id otherField' }
-                it { is_expected.to match_array [nil] }
-                it { expect(errors).to eq ['message' => 'Cannot return null for non-nullable field TypeWithKey.otherField'] }
-              end
-
-              context 'selection only includes fields that are part of the reference' do
-                let(:selection) { 'id' }
-                it { is_expected.to match_array [{'id' => id.to_s}] }
-                it { expect(errors).to be_nil }
-              end
+            context 'when the type does not define a resolve_reference method' do
+              it { is_expected.to match_array [{ 'id' => id.to_s, 'otherField' => nil }] }
+              it { expect(errors).to be_nil }
             end
 
-            context 'the type defines a resolve_reference method' do
+            context 'when the type defines a resolve_reference method' do
               let(:type_with_key) do
                 Class.new(base_object) do
                   graphql_name 'TypeWithKey'
@@ -201,15 +214,12 @@ describe ApolloFederation::EntitiesField do
                   field :other_field, 'String', null: false
 
                   def self.resolve_reference(reference, _context)
-                    if reference[:id] == 123
-                      {id: 123, other_field: 'more data'}
-                    else
-                      nil
-                    end
+                    { id: 123, other_field: 'more data' } if reference[:id] == 123
                   end
                 end
               end
-              it { is_expected.to match_array [{'id' => id.to_s, 'otherField' => 'more data'}] }
+
+              it { is_expected.to match_array [{ 'id' => id.to_s, 'otherField' => 'more data' }] }
               it { expect(errors).to be_nil }
             end
           end
